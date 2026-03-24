@@ -33,6 +33,13 @@ router.post(
  */
 router.post('/mercadopago/webhook', mpWebhook)
 
+// ── MP return redirects (dev: backend → frontend local) ──────
+router.get('/return/:status/:bookingId', (req, res) => {
+  const { status, bookingId } = req.params
+  const qs = new URLSearchParams(req.query).toString()
+  res.redirect(`${process.env.FRONTEND_BASE_URL}/booking/${bookingId}/${status}${qs ? '?' + qs : ''}`)
+})
+
 // ── SPEI ─────────────────────────────────────────────────────
 
 /**

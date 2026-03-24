@@ -3,7 +3,7 @@
 const express    = require('express')
 const helmet     = require('helmet')
 const cors       = require('cors')
-const { FRONTEND_URL } = require('./config/env')
+const { FRONTEND_URL, NODE_ENV } = require('./config/env')
 const errorHandler     = require('./middleware/errorHandler')
 
 // ── Routers ───────────────────────────────────────────────────
@@ -17,9 +17,22 @@ const { adminRouter: adminPaymentRoutes, publicRouter: payLinkRoutes } =
 
 const app = express()
 
+// ── CORS primero, antes de helmet ────────────────────────────
+app.use((req, res, next) => {
+  const origin = req.headers.origin
+  const allowed = NODE_ENV === 'development' || (Array.isArray(FRONTEND_URL) && FRONTEND_URL.includes(origin))
+  if (origin && allowed) {
+    res.header('Access-Control-Allow-Origin',      origin)
+    res.header('Access-Control-Allow-Credentials', 'true')
+    res.header('Access-Control-Allow-Methods',     'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS')
+    res.header('Access-Control-Allow-Headers',     'Content-Type,Authorization')
+  }
+  if (req.method === 'OPTIONS') return res.status(200).end()
+  next()
+})
+
 // ── Seguridad y parsing ──────────────────────────────────────
-app.use(helmet())
-app.use(cors({ origin: FRONTEND_URL, credentials: true }))
+app.use(helmet({ crossOriginResourcePolicy: false }))
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 

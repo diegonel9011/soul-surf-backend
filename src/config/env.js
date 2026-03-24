@@ -35,7 +35,8 @@ module.exports = {
   R2_BUCKET_NAME:      process.env.R2_BUCKET_NAME ?? '',
   R2_PUBLIC_URL:       process.env.R2_PUBLIC_URL ?? '',
 
-  BACKEND_URL: process.env.BACKEND_URL ?? 'http://localhost:3001',
+  BACKEND_URL:       process.env.BACKEND_URL       ?? 'http://localhost:3001',
+  FRONTEND_BASE_URL: process.env.FRONTEND_BASE_URL ?? 'http://localhost:8081',
 
   SPEI_CLABE:          process.env.SPEI_CLABE ?? '',
   SPEI_BANK:           process.env.SPEI_BANK ?? '',

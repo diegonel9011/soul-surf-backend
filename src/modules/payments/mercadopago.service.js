@@ -4,7 +4,7 @@ const crypto      = require('crypto')
 const { Preference, Payment } = require('mercadopago')
 const mpClient    = require('../../config/mercadopago')
 const prisma      = require('../../config/database')
-const { FRONTEND_URL, BACKEND_URL, MP_WEBHOOK_SECRET, NODE_ENV } = require('../../config/env')
+const { FRONTEND_BASE_URL, BACKEND_URL, MP_WEBHOOK_SECRET, NODE_ENV } = require('../../config/env')
 const { notFoundError, businessError } = require('../../utils/errors')
 
 // ─────────────────────────────────────────────────────────────
@@ -68,15 +68,13 @@ async function createPreference(bookingId) {
     }],
     external_reference: bookingId,
     currency_id:        'MXN',
-    ...(NODE_ENV === 'production' ? {
-      back_urls: {
-        success: `${FRONTEND_URL}/booking/${bookingId}/success`,
-        failure: `${FRONTEND_URL}/booking/${bookingId}/failure`,
-        pending: `${FRONTEND_URL}/booking/${bookingId}/pending`,
-      },
-      auto_return:      'approved',
-      notification_url: `${BACKEND_URL}/api/v1/payments/mercadopago/webhook`,
-    } : {}),
+    back_urls: {
+      success: `${BACKEND_URL}/api/v1/payments/return/success/${bookingId}`,
+      failure: `${BACKEND_URL}/api/v1/payments/return/failure/${bookingId}`,
+      pending: `${BACKEND_URL}/api/v1/payments/return/pending/${bookingId}`,
+    },
+    auto_return:      'approved',
+    notification_url: `${BACKEND_URL}/api/v1/payments/mercadopago/webhook`,
   }
 
   const response = await preference.create({ body: prefBody })
