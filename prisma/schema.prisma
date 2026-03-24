@@ -1,0 +1,359 @@
+// Soul Surf School — Prisma Schema
+// PostgreSQL 16
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum ClassType {
+  private
+  group
+  half_day_trip
+  full_day_trip
+}
+
+enum SurfLevel {
+  beginner
+  intermediate
+  advanced
+}
+
+enum LycraSize {
+  XS
+  S
+  M
+  L
+  XL
+  XXL
+}
+
+enum BookingStatus {
+  pending_payment
+  confirmed
+  completed
+  cancelled
+}
+
+enum SlotStatus {
+  available
+  full
+  blocked
+}
+
+enum SessionStatus {
+  scheduled
+  completed
+  cancelled
+  rescheduled
+}
+
+enum PaymentMethod {
+  mercadopago
+  spei
+  cash
+}
+
+enum PaymentStatus {
+  pending
+  processing
+  completed
+  failed
+  refunded
+}
+
+enum ProofReviewStatus {
+  pending
+  approved
+  rejected
+}
+
+enum MediaType {
+  photo
+  video
+}
+
+enum AdminRole {
+  admin
+  staff
+}
+
+// ─────────────────────────────────────────────
+// PRICE RULES
+// Motor de precios. Configurable sin re-deploy.
+// Lógica de búsqueda:
+//   minLessons <= numLessons <= maxLessons (null = sin límite)
+// ─────────────────────────────────────────────
+
+model PriceRule {
+  id             Int       @id @default(autoincrement())
+  classType      ClassType @map("class_type")
+  minLessons     Int       @map("min_lessons")
+  maxLessons     Int?      @map("max_lessons")       // null → paquete 6+
+  pricePerLesson Decimal   @map("price_per_lesson") @db.Decimal(10, 2)
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@map("price_rules")
+}
+
+// ─────────────────────────────────────────────
+// INSTRUCTORS
+// ─────────────────────────────────────────────
+
+model Instructor {
+  id        String   @id @default(uuid())
+  name      String   @db.VarChar(150)
+  phone     String?  @db.VarChar(20)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  availabilitySlots AvailabilitySlot[]
+  bookingSessions   BookingSession[]
+
+  @@map("instructors")
+}
+
+// ─────────────────────────────────────────────
+// CLIENTS
+// ─────────────────────────────────────────────
+
+model Client {
+  id        String     @id @default(uuid())
+  firstName String     @map("first_name") @db.VarChar(100)
+  lastName  String     @map("last_name") @db.VarChar(100)
+  email     String     @unique @db.VarChar(255)
+  phone     String?    @db.VarChar(30)
+  surfLevel SurfLevel  @default(beginner) @map("surf_level")
+  lycraSize LycraSize? @map("lycra_size")
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  bookings Booking[]
+  waivers  Waiver[]
+
+  @@map("clients")
+}
+
+// ─────────────────────────────────────────────
+// AVAILABILITY SLOTS
+// Privadas: maxCapacity=1 | Grupales: maxCapacity=2 (máx 2 alumnos/instructor)
+// Excursiones: maxCapacity=4 (hasta 4 personas con 2 guías)
+// bookedCount se incrementa al confirmar una reserva.
+// ─────────────────────────────────────────────
+
+model AvailabilitySlot {
+  id           String     @id @default(uuid())
+  slotDate     DateTime   @map("slot_date") @db.Date
+  startTime    DateTime   @map("start_time") @db.Time(0)
+  classType    ClassType  @map("class_type")
+  instructorId String?    @map("instructor_id")
+  maxCapacity  Int        @default(1) @map("max_capacity")
+  bookedCount  Int        @default(0) @map("booked_count")
+  status       SlotStatus @default(available)
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  instructor      Instructor?      @relation(fields: [instructorId], references: [id])
+  bookingSessions BookingSession[]
+
+  @@unique([slotDate, startTime, instructorId], name: "uq_slot_instructor")
+  @@index([slotDate, classType, status])
+  @@map("availability_slots")
+}
+
+// ─────────────────────────────────────────────
+// BOOKINGS
+// Cabecera de la reserva + sistema de créditos.
+//
+// Invariante: lessonsRemaining = numLessons - (sesiones agendadas)
+// Al crear: lessonsRemaining = numLessons - 1  (1ª sesión ya agendada)
+// ─────────────────────────────────────────────
+
+model Booking {
+  id         String @id @default(uuid())
+  bookingRef String @unique @map("booking_ref") @db.VarChar(20)
+  clientId   String @map("client_id")
+
+  classType        ClassType @map("class_type")
+  numLessons       Int       @default(1) @map("num_lessons")
+  lessonsRemaining Int       @default(0) @map("lessons_remaining")
+  numParticipants  Int       @default(1) @map("num_participants")
+
+  // Precio bloqueado en el momento del cotizador
+  pricePerLesson Decimal @map("price_per_lesson") @db.Decimal(10, 2)
+  totalAmount    Decimal @map("total_amount") @db.Decimal(10, 2)
+  // totalAmount = pricePerLesson * numLessons * numParticipants
+
+  status         BookingStatus @default(pending_payment)
+  waiverSigned   Boolean       @default(false) @map("waiver_signed")
+  waiverSignedAt DateTime?     @map("waiver_signed_at")
+  notes          String?       @db.Text
+
+  // Link de cobro rápido: staff genera y envía por WhatsApp
+  paymentLinkToken     String?   @unique @map("payment_link_token") @db.VarChar(64)
+  paymentLinkExpiresAt DateTime? @map("payment_link_expires_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  client          Client           @relation(fields: [clientId], references: [id])
+  bookingSessions BookingSession[]
+  payments        Payment[]
+  waivers         Waiver[]
+
+  @@index([clientId])
+  @@index([status])
+  @@index([paymentLinkToken])
+  @@map("bookings")
+}
+
+// ─────────────────────────────────────────────
+// BOOKING SESSIONS
+// Cada sesión física agendada dentro de una reserva.
+//
+// sessionNumber=1 → primera clase (agendada al comprar)
+// sessionNumber=2,3… → créditos redimidos por staff
+//
+// Al agregar: booking.lessonsRemaining -= 1
+// Al cancelar: booking.lessonsRemaining += 1
+// ─────────────────────────────────────────────
+
+model BookingSession {
+  id            String        @id @default(uuid())
+  bookingId     String        @map("booking_id")
+  slotId        String        @map("slot_id")
+  sessionDate   DateTime      @map("session_date") @db.Date
+  startTime     DateTime      @map("start_time") @db.Time(0)
+  instructorId  String?       @map("instructor_id")
+  status        SessionStatus @default(scheduled)
+  sessionNumber Int           @default(1) @map("session_number")
+  notes         String?       @db.Text
+
+  booking    Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  slot       AvailabilitySlot @relation(fields: [slotId], references: [id])
+  instructor Instructor?      @relation(fields: [instructorId], references: [id])
+
+  @@unique([bookingId, sessionNumber])
+  @@map("booking_sessions")
+}
+
+// ─────────────────────────────────────────────
+// WAIVERS — Responsiva / términos digitales
+// ─────────────────────────────────────────────
+
+model Waiver {
+  id           String   @id @default(uuid())
+  bookingId    String   @map("booking_id")
+  clientId     String   @map("client_id")
+  fullName     String   @map("full_name") @db.VarChar(200)
+  signatureUrl String?  @map("signature_url") @db.Text
+  ipAddress    String?  @map("ip_address") @db.VarChar(45)
+  userAgent    String?  @map("user_agent") @db.Text
+  acceptedAt   DateTime @default(now()) @map("accepted_at")
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+  client  Client  @relation(fields: [clientId], references: [id])
+
+  @@map("waivers")
+}
+
+// ─────────────────────────────────────────────
+// PAYMENTS
+// Un booking puede tener múltiples intentos.
+// Solo uno debe quedar en status=completed.
+// ─────────────────────────────────────────────
+
+model Payment {
+  id            String        @id @default(uuid())
+  bookingId     String        @map("booking_id")
+  paymentMethod PaymentMethod @map("payment_method")
+  amount        Decimal       @db.Decimal(10, 2)
+  currency      String        @default("MXN") @db.Char(3)
+  status        PaymentStatus @default(pending)
+
+  mpPreferenceId String? @map("mp_preference_id") @db.VarChar(100)
+  mpPaymentId    String? @map("mp_payment_id") @db.VarChar(100)
+  mpOrderId      String? @map("mp_order_id") @db.VarChar(100)
+  mpStatusDetail String? @map("mp_status_detail") @db.VarChar(100)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  booking Booking        @relation(fields: [bookingId], references: [id])
+  proofs  PaymentProof[]
+
+  @@index([bookingId])
+  @@index([mpPaymentId])
+  @@map("payments")
+}
+
+// ─────────────────────────────────────────────
+// PAYMENT PROOFS — Comprobantes SPEI
+// ─────────────────────────────────────────────
+
+model PaymentProof {
+  id           String            @id @default(uuid())
+  paymentId    String            @map("payment_id")
+  fileUrl      String            @map("file_url") @db.Text
+  fileName     String?           @map("file_name") @db.VarChar(255)
+  uploadedAt   DateTime          @default(now()) @map("uploaded_at")
+  reviewStatus ProofReviewStatus @default(pending) @map("review_status")
+  reviewedBy   String?           @map("reviewed_by")
+  reviewedAt   DateTime?         @map("reviewed_at")
+  reviewNotes  String?           @map("review_notes") @db.Text
+
+  payment  Payment    @relation(fields: [paymentId], references: [id])
+  reviewer AdminUser? @relation(fields: [reviewedBy], references: [id])
+
+  @@map("payment_proofs")
+}
+
+// ─────────────────────────────────────────────
+// ADMIN USERS
+// ─────────────────────────────────────────────
+
+model AdminUser {
+  id           String    @id @default(uuid())
+  name         String    @db.VarChar(150)
+  email        String    @unique @db.VarChar(255)
+  passwordHash String    @map("password_hash") @db.Text
+  role         AdminRole @default(staff)
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  proofReviews PaymentProof[]
+  mediaUploads Media[]
+
+  @@map("admin_users")
+}
+
+// ─────────────────────────────────────────────
+// MEDIA — Galería de evidencias
+// ─────────────────────────────────────────────
+
+model Media {
+  id           String    @id @default(uuid())
+  mediaType    MediaType @map("media_type")
+  url          String    @db.Text
+  thumbnailUrl String?   @map("thumbnail_url") @db.Text
+  title        String?   @db.VarChar(200)
+  description  String?   @db.Text
+  tags         String[]
+  displayOrder Int       @default(0) @map("display_order")
+  isFeatured   Boolean   @default(false) @map("is_featured")
+  uploadedBy   String?   @map("uploaded_by")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  uploader AdminUser? @relation(fields: [uploadedBy], references: [id])
+
+  @@index([mediaType, isFeatured])
+  @@index([displayOrder])
+  @@map("media")
+}
